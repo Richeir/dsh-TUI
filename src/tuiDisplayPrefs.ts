@@ -34,6 +34,9 @@ export interface StatusBarConfig {
   tps: boolean
   /** Current git branch. */
   gitBranch: boolean
+  /** Open pull request for the current branch (PR #N), resolved via the
+   *  gh CLI when available. */
+  pullRequest: boolean
   /** Current session title. */
   sessionTitle: boolean
   /** Short session id (# + first 8 chars), matching the session log filename. */
@@ -64,6 +67,7 @@ export const DEFAULT_STATUS_BAR: Readonly<StatusBarConfig> = Object.freeze({
   cost: true,
   tps: false,
   gitBranch: false,
+  pullRequest: false,
   sessionTitle: false,
   sessionId: false,
   goal: true,

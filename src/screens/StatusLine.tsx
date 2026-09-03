@@ -33,7 +33,7 @@ import type { WaveBand } from '../dsh-adapter/types.js'
  * The footer under the prompt input, in Claude Code's PromptInputFooter
  * layout: the segmented context progress bar on its own first line, the
  * status line below (left group: model · tokens · think level · cache · tps
- * gauge/sparkline; right group: git · cwd · title · short session id,
+ * gauge/sparkline; right group: git · PR · cwd · title · short session id,
  * right-aligned), and the
  * mode/hint line last. The right side of the footer shows the latest
  * transient notification (errors in red, warnings in amber — CC style).
@@ -57,6 +57,7 @@ type HoverTarget =
   | 'jobs'
   | 'model'
   | 'git'
+  | 'pr'
   | 'sessionId'
   | 'cwd'
   | 'title'
@@ -356,6 +357,18 @@ export function StatusLine({
             key: 'git',
             id: 'git' as const,
             node: <Text color="professionalBlue">{channel.gitBranch}</Text>,
+          },
+        ]
+      : []),
+    // PR chip trails the branch it belongs to, Claude Code style: `PR #602`,
+    // shown whenever the gh probe resolved one for this branch (the probe
+    // itself is gated by the pullRequest switch).
+    ...(statusBar.pullRequest && channel.prNumber !== undefined
+      ? [
+          {
+            key: 'pr',
+            id: 'pr' as const,
+            node: <Text color="professionalBlue">{`PR #${channel.prNumber}`}</Text>,
           },
         ]
       : []),
@@ -688,6 +701,15 @@ function buildHoverDetail(
       return (
         <Text wrap="truncate">
           {dim('git ')}{channel.gitBranch}
+        </Text>
+      )
+    }
+    case 'pr': {
+      if (channel.prNumber === undefined) return null
+      return (
+        <Text wrap="truncate">
+          {dim('pr ')}#{channel.prNumber}
+          {channel.prUrl !== undefined ? <> · {channel.prUrl}</> : null}
         </Text>
       )
     }

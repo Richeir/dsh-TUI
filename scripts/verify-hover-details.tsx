@@ -6,8 +6,9 @@
  *     弹出完整路径 + 类型；完整可见的短路径行不弹。
  *  G. 会话列表行：标题截断时悬停弹【完整标题 + 绝对时间 + cwd】；标题
  *     未截断时浮层不重复标题（只带时间 + cwd）。
- *  H. 状态栏 model/git 字段：悬停 model 弹 provider + ctx 窗口明细；
- *     悬停 git 弹完整分支名（原地明细行契约，与 tps/cost 同款）。
+ *  H. 状态栏 model/git/PR 字段：悬停 model 弹 provider + ctx 窗口明细；
+ *     悬停 git 弹完整分支名（原地明细行契约，与 tps/cost 同款）；悬停
+ *     PR chip 弹 `pr #N · <url>` 明细。
  *
  * Run: `node --import tsx/esm scripts/verify-hover-details.tsx`
  */
@@ -167,11 +168,13 @@ try {
   // --- H. 状态栏字段：model/git 悬停明细 ---------------------------------
   const channelStub = {
     minimal: false,
-    statusBar: { gitBranch: true },
+    statusBar: { gitBranch: true, pullRequest: true },
     model: 'TM',
     provider: 'test-provider',
     contextWindow: 64_000,
     gitBranch: 'test-branch-long',
+    prNumber: 602,
+    prUrl: 'https://github.com/o/r/pull/602',
     displayCwd: 'D:\\work\\dsh-tui',
     cwd: 'D:\\work\\dsh-tui',
     mode: { plan: false, sandbox: 'workspace-write', approval: 'on-request' },
@@ -202,6 +205,7 @@ try {
   )
   check('场景 H 就绪：状态栏 model/git 字段在屏',
     await settled(() => screenHas(term, 'TM') && screenHas(term, 'test-branch-long')))
+  check('场景 H 就绪：PR chip 在屏', screenHas(term, 'PR #602'))
   check('H 未悬停时无明细行', !screenHas(term, 'provider test-provider'))
   hoverText(stdin, term, 'TM')
   check('H 悬停 model 字段弹 provider/ctx 明细',
@@ -211,6 +215,12 @@ try {
     await settled(() => screenHas(term, 'git test-branch-long')))
   check('H 明细随悬停目标切换（model 明细已离开）',
     await settled(() => !screenHas(term, 'provider test-provider')))
+  // PR chip: the hover payoff is the URL you would open in a browser.
+  hoverText(stdin, term, 'PR #602')
+  check('H 悬停 PR chip 弹编号与 URL 明细',
+    await settled(() => screenHas(term, 'pr #602') && screenHas(term, 'github.com/o/r/pull/602')))
+  check('H 悬停 PR 后 git 明细已离开',
+    await settled(() => !screenHas(term, 'git test-branch-long')))
   hover(stdin, 1, 1)
 
   instance.unmount()

@@ -816,6 +816,11 @@ export interface Channel {
   readonly displayCwd: string
   /** Current git branch, when the cwd is inside a git worktree. */
   readonly gitBranch: string | undefined
+  /** Open PR number for the current branch, when the gh CLI resolved one
+   *  (best-effort: gated on statusBar.pullRequest, no gh / no PR → blank). */
+  readonly prNumber: number | undefined
+  /** Web URL of the detected PR, when gh reported one. */
+  readonly prUrl: string | undefined
   /** True between turn/start and turn/end — drives the working spinner. */
   readonly working: boolean
   /** True while a user-requested abort (Ctrl+C/Esc interrupt) has not yet
@@ -1330,6 +1335,8 @@ export interface ChannelState {
   cwd: string
   displayCwd: string
   gitBranch: string | undefined
+  prNumber: number | undefined
+  prUrl: string | undefined
   working: boolean
   /** Whether a requested abort is still converging (see the public Channel type). */
   cancelPending: boolean
@@ -3651,6 +3658,8 @@ export function createChannel(
     cwd: options.cwd,
     displayCwd: workspaceService.describe(options.cwd).description ?? options.cwd,
     gitBranch: undefined,
+    prNumber: undefined,
+    prUrl: undefined,
     working: false,
     cancelPending: false,
     spinnerMode: 'requesting',
@@ -5580,8 +5589,20 @@ export function createChannel(
         next[key as keyof StatusBarConfig] !== state.statusBar[key as keyof StatusBarConfig],
       )
       if (!changed) return
+      const prGained = next.pullRequest && !state.statusBar.pullRequest
+      const prLost = state.statusBar.pullRequest && !next.pullRequest
       state.statusBar = next
+      // Turning the field off hides stale data at once; turning it on mid-
+      // session needs the boot-time probe that the gate had skipped — re-run
+      // the branch funnel, which chains the PR lookup (branch already known
+      // short-circuits the stale-clear; unknown branch means the boot probe
+      // is still in flight and will chain on its own).
+      if (prLost) {
+        state.prNumber = undefined
+        state.prUrl = undefined
+      }
       state.emit()
+      if (prGained && state.gitBranch !== undefined) refreshPullRequest(state.cwd, state.gitBranch)
     },
     setWhale(visible) {
       if (visible === state.whale) return
@@ -8626,11 +8647,55 @@ ${output}
     effect?: (setup: () => () => void, label?: string) => void
   }).effect
   effect?.call(ctx, () => () => { stopActivityTick() }, 'dsh-tui activity timer')
+  // Claude Code-style PR breadcrumb: the open PR for the current branch,
+  // resolved through the `gh` CLI. Unlike the branch probe this is a network
+  // round-trip, so it only runs while the status-bar field is switched on.
+  // Best-effort like the branch probe: no gh / unauthenticated / no PR /
+  // timeout → the field simply stays blank.
+  const refreshPullRequest = (requestedCwd: string, branch: string) => {
+    state.prNumber = undefined
+    state.prUrl = undefined
+    if (!bash || !state.statusBar.pullRequest || branch === '') return
+    void bash
+      .run(
+        bash.resolve({
+          command: 'gh pr view --json number,url',
+          workdir: requestedCwd,
+          timeoutMs: 8000,
+        }),
+      )
+      .then((result) => {
+        // Same staleness guard as the branch probe (issue #96): a reply from
+        // the previous workspace must never land in the new one's footer.
+        if (state.cwd !== requestedCwd) return
+        // gh exits non-zero when the branch has no PR — a blank breadcrumb
+        // IS the answer; the extra emit only clears a previously shown one.
+        if (result.exitCode !== 0) {
+          state.emit()
+          return
+        }
+        try {
+          const parsed = JSON.parse(result.stdout.text) as { number?: unknown; url?: unknown }
+          if (typeof parsed.number === 'number' && Number.isFinite(parsed.number)) {
+            state.prNumber = parsed.number
+            state.prUrl = typeof parsed.url === 'string' && parsed.url !== '' ? parsed.url : undefined
+            state.emit()
+          }
+        } catch {
+          // Unparseable gh output: stay blank, same as no PR.
+        }
+      })
+      .catch(() => {
+        // gh missing, sandbox backend unavailable, or timeout — blank.
+      })
+  }
   // Statusline breadcrumb: current git branch of the session cwd (best-effort).
   // Re-run when an agent swap adopts a different persisted cwd (/resume,
   // issue #96) so the breadcrumb never shows the previous workspace's branch.
   const refreshGitBranch = () => {
     state.gitBranch = undefined
+    state.prNumber = undefined
+    state.prUrl = undefined
     if (!bash) return
     // Capture the requested cwd: a /resume landing while this query is in
     // flight refreshes the branch for the NEW cwd, so a late reply from the
@@ -8657,6 +8722,9 @@ ${output}
           // Feed the working line so git tools can show ` · git <branch>`.
           updateWorkingActivity('git branch', () => activityTracker.onGitBranch(branch))
           state.emit()
+          // The PR probe needs the branch, so it chains here (cwd/branch
+          // changes all funnel through refreshGitBranch).
+          refreshPullRequest(requestedCwd, branch)
         }
       })
       .catch(() => {

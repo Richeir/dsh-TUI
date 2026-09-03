@@ -174,6 +174,7 @@ export const Config: Schema<Config> = Schema.object({
     tokens: Schema.boolean().default(DEFAULT_STATUS_BAR.tokens),
     tps: Schema.boolean().default(DEFAULT_STATUS_BAR.tps),
     gitBranch: Schema.boolean().default(DEFAULT_STATUS_BAR.gitBranch),
+    pullRequest: Schema.boolean().default(DEFAULT_STATUS_BAR.pullRequest),
     sessionTitle: Schema.boolean().default(DEFAULT_STATUS_BAR.sessionTitle),
     sessionId: Schema.boolean().default(DEFAULT_STATUS_BAR.sessionId),
     goal: Schema.boolean().default(DEFAULT_STATUS_BAR.goal),
