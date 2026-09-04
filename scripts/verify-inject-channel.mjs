@@ -13,18 +13,72 @@
  * - two messages in one write (split on the newline) both dispatch, in order
  * - close() removes this session's discovery record and unlinks the socket
  *
- * Uses a temp HOME so the real ~/.dsh-tui is never touched.
+ * Uses a temp HOME so the real ~/.dsh-tui is never touched. The temp HOME comes
+ * from a short root: Unix sockets bind through a 104-byte `sun_path` cap, and
+ * macOS hands out a ~48-byte per-user TMPDIR (/var/folders/.../T), so
+ * `mkdtempSync(tmpdir())` plus the real socket suffix overflows it and `listen`
+ * fails with EINVAL. `/tmp` is tried first; if no writable short root exists,
+ * the socket half is reported skipped instead of failing the gate for a reason
+ * unrelated to injection.
  *
  * Run: node --import tsx/esm scripts/verify-inject-channel.mjs
  */
 import { connect } from 'node:net'
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+
+/** Hard cap on a bindable Unix socket path (bytes of `sockaddr_un` `sun_path`). */
+const SUN_PATH_LIMIT = 104
+
+/** Session id for the socket e2e; short on purpose to leave path budget. */
+const sessionId = 'inject-test-1'
+
+/** Length the socket path would end up at for a candidate fake home, in bytes. */
+function socketPathLength(home) {
+  // The cap is on encoded bytes, not UTF-16 units: a non-ASCII home directory
+  // costs more sun_path than it looks.
+  return Buffer.byteLength(join(home, '.dsh-tui', 'inject', `${sessionId}.sock`), 'utf8')
+}
+
+/**
+ * Create a fake home whose derived socket path is still bindable, preferring
+ * roots that are already short.
+ * @returns {{ home: string, overBudget: boolean }} fake home and whether every
+ *   candidate root overflowed {@link SUN_PATH_LIMIT}.
+ */
+function makeTempHome() {
+  const roots = []
+  for (const root of ['/tmp', tmpdir()]) {
+    if (roots.includes(root)) continue
+    try {
+      accessSync(root, constants.W_OK)
+      roots.push(root)
+    } catch {
+      // Not usable as a temp root; the next candidate may be.
+    }
+  }
+  for (const root of roots) {
+    let home
+    try {
+      home = mkdtempSync(join(root, 'dsh-inj-'))
+    } catch {
+      continue
+    }
+    if (socketPathLength(home) <= SUN_PATH_LIMIT) return { home, overBudget: false }
+    rmSync(home, { recursive: true, force: true })
+  }
+  // No short writable root: still hand the module a home so the pure-parse
+  // checks run, and let the caller skip the socket half. Relative to cwd, and
+  // pruned below once the run finishes.
+  const fallback = join(process.cwd(), '.tmp', 'dsh-inject-unbindable')
+  mkdirSync(dirname(fallback), { recursive: true })
+  return { home: fallback, overBudget: true }
+}
 
 // Point DATA_DIR at a temp home BEFORE importing the module (paths.ts reads
 // homedir at import time).
-const tmpHome = mkdtempSync(join(tmpdir(), 'dsh-inject-'))
+const { home: tmpHome, overBudget } = makeTempHome()
 process.env.HOME = tmpHome
 process.env.USERPROFILE = tmpHome
 
@@ -51,13 +105,27 @@ check('append without text → null', parseInjectMessage('{"type":"prompt.append
 check('append non-string text → null', parseInjectMessage('{"type":"prompt.append","text":42}') === null)
 check('unknown command → null', parseInjectMessage('{"type":"command.execute","command":"session.new"}') === null)
 
+function cleanup() {
+  try {
+    rmSync(tmpHome, { recursive: true, force: true })
+  } catch {
+    // Best-effort: a leaked temp home must not change the gate verdict.
+  }
+}
+
 if (process.platform === 'win32') {
   console.log('socket e2e: skipped on win32 (named pipes)')
+  cleanup()
+  process.exit(failures === 0 ? 0 : 1)
+}
+
+if (overBudget) {
+  console.log(`socket e2e: skipped (no writable temp root short enough for a ${SUN_PATH_LIMIT}-byte sun_path)`)
+  cleanup()
   process.exit(failures === 0 ? 0 : 1)
 }
 
 console.log('socket e2e:')
-const sessionId = 'test-session-1234'
 const cwd = '/tmp/project-x'
 const appended = []
 let submits = 0
@@ -101,4 +169,5 @@ check('discovery record removed after close', after.find((s) => s.sessionId === 
 check('socket file unlinked after close', !existsSync(channel.socketPath))
 
 console.log(failures === 0 ? '\nAll injection-channel checks passed.' : `\n${failures} check(s) failed.`)
+cleanup()
 process.exit(failures === 0 ? 0 : 1)
