@@ -329,6 +329,10 @@ const GROUPS = {
 // 不弹）、会话列表行标题截断悬停弹完整标题+绝对时间+cwd（未截断不重复
 // 标题）、状态栏 model/git 字段悬停明细（provider/ctx 窗口/完整分支）。
     ["verify-hover-details", ['node', '--import', 'tsx/esm', 'scripts/verify-hover-details.tsx']],
+// 状态栏字段开关与显示偏好归一化：DEFAULT_STATUS_BAR 形状、normalizeStatusBar
+// 拒绝路径、底栏右组 chip 的开关门控（goal/PR 双向）、PR chip 的 success
+// 配色穿透 Link、PR breadcrumb 的 gh 应答解析（非 OPEN 的 state 不上屏）。
+    ["verify-display-settings", ['node', '--import', 'tsx/esm', 'scripts/verify-display-settings.tsx']],
 // 便携包更新解压链安全回归：Windows 解压优先 tar.exe 数组参数，回退
 // Expand-Archive 的两个路径按 PowerShell 约定把 ' 双写为 ''——路径派生
 // 自环境变量，不转义即可注入任意命令；解压与替换之间的提取树校验拒绝

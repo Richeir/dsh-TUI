@@ -13,6 +13,7 @@ const [
   { DEFAULT_STATUS_BAR, formatContextUsage, normalizeStatusBar, normalizeToolBackground },
   { homeDir },
   { parsePrView },
+  { getTheme },
 ] = await Promise.all([
   import('node:assert'),
   import('node:stream'),
@@ -24,6 +25,7 @@ const [
   import('../src/tuiDisplayPrefs.js'),
   import('../src/utils/paths.js'),
   import('../src/dsh-adapter/channel.js'),
+  import('../src/theme.js'),
 ])
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
@@ -126,7 +128,13 @@ const wake = {
 async function renderStatus(
   overrides: Record<string, unknown> = {},
   columns = 140,
-  options: { selectionActive?: boolean; helpOpen?: boolean } = {},
+  options: {
+    selectionActive?: boolean
+    helpOpen?: boolean
+    /** Runs while the frame is still alive — for cell-style probes the
+     *  text `screen()` projection flattens away. */
+    onFrame?: (term: InstanceType<typeof XTerm>) => void
+  } = {},
 ): Promise<string> {
   const harness = makeHarness(columns)
   const channel = { ...baseChannel, ...overrides }
@@ -149,6 +157,7 @@ async function renderStatus(
   )
   await sleep(180)
   const output = harness.screen()
+  options.onFrame?.(harness.term)
   await instance.unmount()
   harness.term.dispose()
   return output
@@ -195,12 +204,17 @@ check('normalizeStatusBar rejects invalid top-level values', () => {
 
 // The gh probe's whole contract is "a breadcrumb or nothing" — anything it
 // cannot vouch for must come back undefined rather than throw or half-parse,
-// because the caller turns that value straight into footer chrome.
+// because the caller turns that value straight into footer chrome. That
+// includes state: gh's branch lookup can resolve a merged/closed PR, and the
+// chip promises "the OPEN PR" — so only an explicit "OPEN" paints it.
 check('parsePrView reads gh number/url and refuses every other shape', () => {
-  assert.deepEqual(parsePrView('{"number":602,"url":"https://github.com/o/r/pull/602"}'), {
-    number: 602,
-    url: 'https://github.com/o/r/pull/602',
-  })
+  assert.deepEqual(
+    parsePrView('{"number":602,"state":"OPEN","url":"https://github.com/o/r/pull/602"}'),
+    {
+      number: 602,
+      url: 'https://github.com/o/r/pull/602',
+    },
+  )
   for (const rejected of [
     '',
     'gh: no pull requests for this branch',
@@ -210,13 +224,19 @@ check('parsePrView reads gh number/url and refuses every other shape', () => {
     '{"number":1.5}',
     '{"number":null}',
     '{"url":"https://github.com/o/r/pull/1"}',
+    // missing / untrusted state: "open" is claimed only under gh's own word.
+    '{"number":602,"url":"https://github.com/o/r/pull/602"}',
+    '{"number":602,"state":"open"}',
+    '{"number":602,"state":"MERGED"}',
+    '{"number":602,"state":"CLOSED"}',
+    '{"number":602,"state":null}',
     '[]',
     'null',
   ]) {
     assert.equal(parsePrView(rejected), undefined, `accepted ${JSON.stringify(rejected)}`)
   }
   // A missing/empty url is still a usable number chip.
-  assert.deepEqual(parsePrView('{"number":7,"url":""}'), { number: 7, url: undefined })
+  assert.deepEqual(parsePrView('{"number":7,"state":"OPEN","url":""}'), { number: 7, url: undefined })
 })
 
 // Metric formatting.
@@ -341,14 +361,43 @@ check('goal chip respects the statusBar.goal switch', () => {
 // chrome, and the probe can outlive the switch — so the render side has to
 // honor it on its own too. Both directions are pinned with a channel that
 // already carries a number, which is exactly the stale-data case.
-const withPr = await renderStatus({
-  prNumber: 602,
-  prUrl: 'https://github.com/ccch1mneyyy/dsh-TUI/pull/602',
-  statusBar: { ...DEFAULT_STATUS_BAR, gitBranch: true, pullRequest: true },
-})
+// The chip's own colour (theme `success`, GitHub's open-PR green — the
+// visual independence from the blue branch is part of the contract) must
+// survive the nested Text→Link. Styles are invisible to `screen()`, so the
+// assertion reads them off the live buffer through `onFrame`.
+const darkSuccessRgb = getTheme('dark').success.match(/(\d+),(\d+),(\d+)/)
+assert.ok(darkSuccessRgb, `unparseable dark success: ${getTheme('dark').success}`)
+const [, successR, successG, successB] = darkSuccessRgb
+const expectedPrFg = (Number(successR) << 16) | (Number(successG) << 8) | Number(successB)
+let prChipFg: number | undefined
+const withPr = await renderStatus(
+  {
+    prNumber: 602,
+    prUrl: 'https://github.com/ccch1mneyyy/dsh-TUI/pull/602',
+    statusBar: { ...DEFAULT_STATUS_BAR, gitBranch: true, pullRequest: true },
+  },
+  140,
+  {
+    onFrame: (term) => {
+      const buf = term.buffer.active
+      for (let y = 0; y < buf.length; y++) {
+        const line = buf.getLine(y)
+        if (!line) continue
+        const x = line.translateToString(true).indexOf('PR #602')
+        if (x >= 0) {
+          prChipFg = (line.getCell(x)?.getFgColor() ?? 0) & 0xffffff
+          break
+        }
+      }
+    },
+  },
+)
 check('PR chip renders beside the branch when the switch is on', () => {
   assert.ok(withPr.includes('PR #602'), `missing PR chip in:\n${withPr}`)
   assert.ok(withPr.includes('feat/display-settings-probe'), `branch vanished in:\n${withPr}`)
+})
+check('PR chip keeps the theme success colour through the Link', () => {
+  assert.equal(prChipFg, expectedPrFg, `chip fg=${prChipFg?.toString(16)}, want=${expectedPrFg.toString(16)}`)
 })
 
 const withPrHidden = await renderStatus({

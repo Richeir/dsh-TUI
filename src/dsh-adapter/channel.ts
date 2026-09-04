@@ -1959,11 +1959,15 @@ async function listSessionsSnapshot(ctx: Context): Promise<readonly SessionSumma
 }
 
 /**
- * Read the output of `gh pr view --json number,url`. Total by construction:
- * every unrecognizable shape (no PR, a warning banner where JSON should be,
- * a number that is not a positive integer) means "no breadcrumb" instead of
- * throwing, because the status bar has to degrade to blank — an exception
- * inside a `.then` would surface as an unhandled rejection.
+ * Read the output of `gh pr view --json number,url,state`. Total by
+ * construction: every unrecognizable shape (no PR, a warning banner where
+ * JSON should be, a number that is not a positive integer) means "no
+ * breadcrumb" instead of throwing, because the status bar has to degrade to
+ * blank — an exception inside a `.then` would surface as an unhandled
+ * rejection. A non-OPEN `state` is refused on the same grounds: gh's
+ * branch lookup can resolve to a merged/closed PR, while the footer
+ * promises "the open PR" in open-PR green and links to it — anything the
+ * payload does not vouch for as open must not paint the chip.
  */
 export function parsePrView(
   stdout: string,
@@ -1975,8 +1979,9 @@ export function parsePrView(
     return undefined
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
-  const { number, url } = parsed as { number?: unknown; url?: unknown }
+  const { number, url, state } = parsed as { number?: unknown; url?: unknown; state?: unknown }
   if (typeof number !== 'number' || !Number.isInteger(number) || number <= 0) return undefined
+  if (state !== 'OPEN') return undefined
   return {
     number,
     url: typeof url === 'string' && url !== '' ? url : undefined,
@@ -8742,8 +8747,11 @@ ${output}
     void bash
       .run(
         bash.resolve({
-          command: 'gh pr view --json number,url',
+          command: 'gh pr view --json number,url,state',
           workdir: requestedCwd,
+          // 8s ceiling, not configurable: on a slow network a miss is
+          // indistinguishable from "no PR" — both stay blank, the next
+          // branch/cwd/field change probes again.
           timeoutMs: 8000,
         }),
       )
