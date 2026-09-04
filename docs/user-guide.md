@@ -409,7 +409,7 @@ dsh-TUI 不预装通用技能。`/skills` 浏览 DSH 从当前 profile、用户�
 - 左组：模型 → TPS → thinking 推理等级 → mode 会话模式 → ctx 上下文占用 → cache 缓存命中率 → tokens（`1.2k→340` 输入→输出）→ cost 本会话花费估算（`≈¥0.05 谷`：`≈¥` + 当前计费时段短标记 峰/谷；仅 DeepSeek 官方 provider 且模型有已知单价时显示；hover 查看高峰/空闲拆分与输入/输出/缓存明细）。估算按每次请求的发生时刻分高峰/空闲桶、各按官方对应单价计（高峰期 = 梁文峰，低谷期 = 梁文谷），跨时段会话不会被整段按当前时段计价；估算非账单，以 DeepSeek 平台为准
 - 右组：git 分支 → PR（当前分支打开的 PR，`PR #123`，依赖 gh CLI 探测，探测不到则不显示；hover 查看 PR URL）→ 工作目录（紧凑模式仅 basename）→ 会话标题 → 短会话 ID（`#` + 前 8 位，与日志文件名对应，方便 `--resume` 定位）
 - `statusBar.compact` 时左右合并为单行。
-- 默认开：compact / model / thinking / cwd / contextUsage / cache / cost；默认关：tokens / tps / gitBranch / pullRequest / sessionTitle / sessionId / mode / contextBar / activity / trajectory。
+- 默认开：compact / model / thinking / cwd / contextUsage / cache / cost / goal；默认关：tokens / tps / gitBranch / pullRequest / sessionTitle / sessionId / mode / contextBar / activity / trajectory / shortcutHint。
 
 **Row 3 — 提示 / 工作活动 + 迷你轨迹条**
 - 空闲显示 `? for shortcuts`，回合运行中显示 `esc to interrupt`，消息选择中显示 `esc to return to input`。
