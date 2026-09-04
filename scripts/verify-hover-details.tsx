@@ -205,7 +205,7 @@ try {
   )
   check('场景 H 就绪：状态栏 model/git 字段在屏',
     await settled(() => screenHas(term, 'TM') && screenHas(term, 'test-branch-long')))
-  check('场景 H 就绪：PR chip 在屏', screenHas(term, 'PR #602'))
+  check('场景 H 就绪：PR chip 在屏', await settled(() => screenHas(term, 'PR #602')))
   check('H 未悬停时无明细行', !screenHas(term, 'provider test-provider'))
   hoverText(stdin, term, 'TM')
   check('H 悬停 model 字段弹 provider/ctx 明细',

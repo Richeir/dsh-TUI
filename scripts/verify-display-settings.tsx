@@ -12,6 +12,7 @@ const [
   { AssistantToolUseMessage },
   { DEFAULT_STATUS_BAR, formatContextUsage, normalizeStatusBar, normalizeToolBackground },
   { homeDir },
+  { parsePrView },
 ] = await Promise.all([
   import('node:assert'),
   import('node:stream'),
@@ -22,6 +23,7 @@ const [
   import('../src/components/messages/AssistantToolUseMessage.js'),
   import('../src/tuiDisplayPrefs.js'),
   import('../src/utils/paths.js'),
+  import('../src/dsh-adapter/channel.js'),
 ])
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
@@ -162,8 +164,10 @@ check('DEFAULT_STATUS_BAR keeps the intended compact defaults', () => {
     contextUsage: true,
     cache: true,
     tokens: false,
+    cost: true,
     tps: false,
     gitBranch: false,
+    pullRequest: false,
     sessionTitle: false,
     sessionId: false,
     goal: true,
@@ -187,6 +191,32 @@ check('normalizeStatusBar rejects invalid top-level values', () => {
   for (const invalid of [undefined, null, false, 'compact', 1, [], () => {}]) {
     assert.deepEqual(normalizeStatusBar(invalid), DEFAULT_STATUS_BAR)
   }
+})
+
+// The gh probe's whole contract is "a breadcrumb or nothing" — anything it
+// cannot vouch for must come back undefined rather than throw or half-parse,
+// because the caller turns that value straight into footer chrome.
+check('parsePrView reads gh number/url and refuses every other shape', () => {
+  assert.deepEqual(parsePrView('{"number":602,"url":"https://github.com/o/r/pull/602"}'), {
+    number: 602,
+    url: 'https://github.com/o/r/pull/602',
+  })
+  for (const rejected of [
+    '',
+    'gh: no pull requests for this branch',
+    '{"number":"602"}',
+    '{"number":0}',
+    '{"number":-3}',
+    '{"number":1.5}',
+    '{"number":null}',
+    '{"url":"https://github.com/o/r/pull/1"}',
+    '[]',
+    'null',
+  ]) {
+    assert.equal(parsePrView(rejected), undefined, `accepted ${JSON.stringify(rejected)}`)
+  }
+  // A missing/empty url is still a usable number chip.
+  assert.deepEqual(parsePrView('{"number":7,"url":""}'), { number: 7, url: undefined })
 })
 
 // Metric formatting.
@@ -305,6 +335,30 @@ const withGoalHidden = await renderStatus({
 })
 check('goal chip respects the statusBar.goal switch', () => {
   assert.ok(!withGoalHidden.includes('2/5'), `unexpected goal chip in:\n${withGoalHidden}`)
+})
+
+// statusBar.pullRequest is the only thing between a resolved PR and footer
+// chrome, and the probe can outlive the switch — so the render side has to
+// honor it on its own too. Both directions are pinned with a channel that
+// already carries a number, which is exactly the stale-data case.
+const withPr = await renderStatus({
+  prNumber: 602,
+  prUrl: 'https://github.com/ccch1mneyyy/dsh-TUI/pull/602',
+  statusBar: { ...DEFAULT_STATUS_BAR, gitBranch: true, pullRequest: true },
+})
+check('PR chip renders beside the branch when the switch is on', () => {
+  assert.ok(withPr.includes('PR #602'), `missing PR chip in:\n${withPr}`)
+  assert.ok(withPr.includes('feat/display-settings-probe'), `branch vanished in:\n${withPr}`)
+})
+
+const withPrHidden = await renderStatus({
+  prNumber: 602,
+  prUrl: 'https://github.com/ccch1mneyyy/dsh-TUI/pull/602',
+  statusBar: { ...DEFAULT_STATUS_BAR, gitBranch: true, pullRequest: false },
+})
+check('PR chip respects the statusBar.pullRequest switch', () => {
+  assert.ok(!withPrHidden.includes('PR #'), `unexpected PR chip in:\n${withPrHidden}`)
+  assert.ok(withPrHidden.includes('feat/display-settings-probe'), `branch collateral in:\n${withPrHidden}`)
 })
 
 const working = await renderStatus({ working: true })

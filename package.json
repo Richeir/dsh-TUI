@@ -149,6 +149,7 @@
     "verify:bun-package": "node scripts/verify-bun-package.mjs",
     "verify:prompt-debug": "npm run build && node scripts/verify-prompt-debug.mjs",
     "verify:clipboard-image": "node --import tsx/esm scripts/verify-clipboard-image.ts",
+    "verify:display-settings": "node --import tsx/esm scripts/verify-display-settings.tsx",
     "verify:history-search": "node --import tsx/esm scripts/verify-history-search.mjs",
     "verify:initial-prompt": "node scripts/verify-initial-prompt.mjs",
     "verify:plugin-ledger": "node --import tsx/esm scripts/verify-plugin-ledger.ts",

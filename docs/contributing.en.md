@@ -263,6 +263,7 @@ change, also run the closest focused script:
 | Mouse pointer event pipeline (wheel coords/modifier bits, click/hover dispatch, out-of-bounds clamping, pointer-state reset) | `node --import tsx/esm scripts/verify-pointer-events.ts` |
 | Hover event performance (complete interest boundaries, no-interest rect fast path, frame/multi-root invalidation) | `node --import tsx/esm scripts/verify-hover-coalesce.tsx` |
 | Prompt-input mouse selection editing (drag/Shift+click/double-click word select, delete/replace, layered Esc, Ctrl+C copy, CJK wide cells, fold-side clamping) | `node --import tsx/esm scripts/verify-input-selection.tsx` |
+| Status-bar field switches and display-pref normalization (new `statusBar.*` keys, footer right-group chips, the PR breadcrumb's gh reply parsing) | `node --import tsx/esm scripts/verify-display-settings.tsx` |
 
 Most focused scripts invoked with plain `node` import `lib/types/`; run
 `pnpm build` first. Scripts that import TypeScript sources declare the
