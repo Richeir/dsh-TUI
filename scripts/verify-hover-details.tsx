@@ -8,7 +8,8 @@
  *     未截断时浮层不重复标题（只带时间 + cwd）。
  *  H. 状态栏 model/git/PR 字段：悬停 model 弹 provider + ctx 窗口明细；
  *     悬停 git 弹完整分支名（原地明细行契约，与 tps/cost 同款）；悬停
- *     PR chip 弹 `pr #N · <url>` 明细。
+ *     PR chip 弹 `pr #N · <url>` 明细；PR chip 携带 OSC 8 超链接，全屏
+ *     点击经 App 释放路径回调 onHyperlinkClick（H2）。
  *
  * Run: `node --import tsx/esm scripts/verify-hover-details.tsx`
  */
@@ -74,6 +75,7 @@ function hoverText(stdin: PassThrough, term: XTerm, needle: string): void {
 const { FileSuggestions } = await import('../src/components/FileSuggestions.js')
 const { SessionListRow } = await import('../src/components/sessions/SessionListRow.js')
 const { StatusLine } = await import('../src/screens/StatusLine.js')
+const { default: inkInstances } = await import('../src/ink/instances.js')
 const { formatAbsolute } = await import('../src/sessions/format.js')
 
 try {
@@ -166,6 +168,9 @@ try {
   hover(stdin, 1, 1)
 
   // --- H. 状态栏字段：model/git 悬停明细 ---------------------------------
+  // PR chip 的 OSC 8 超链接只在终端被判定支持超链接时发出：fake stdout
+  // 不是真终端，用 TERM_PROGRAM 声明能力（ghostty 在扩展检测清单里）。
+  process.env.TERM_PROGRAM = 'ghostty'
   const channelStub = {
     minimal: false,
     statusBar: { gitBranch: true, pullRequest: true },
@@ -222,6 +227,28 @@ try {
   check('H 悬停 PR 后 git 明细已离开',
     await settled(() => !screenHas(term, 'git test-branch-long')))
   hover(stdin, 1, 1)
+
+  // --- H2. PR chip 可点击：OSC 8 超链接 + App 释放路径回调 ----------------
+  // getHyperlinkAt 是点击时解析单元格的同一入口（frontFrame 屏幕）；
+  // 模拟 press+release 后，openHyperlink 被 MULTI_CLICK_TIMEOUT_MS（500ms）
+  // 延迟派发（留给双击取消），onHyperlinkClick 即 Chat 打开浏览器的接缝。
+  {
+    const PR_URL = 'https://github.com/o/r/pull/602'
+    const ink = inkInstances.get(rig.stdout)
+    check('H2 可取得 Ink 实例', ink !== undefined)
+    const at = findText(term, 'PR #602')
+    check('H2 PR chip 单元格携带 OSC 8 PR URL',
+      ink !== undefined && at !== null && ink.getHyperlinkAt(at.col, at.row) === PR_URL)
+    const opened: string[] = []
+    if (ink !== undefined) ink.onHyperlinkClick = url => { opened.push(url) }
+    if (at !== null) {
+      stdin.write(`\x1b[<0;${at.col + 1};${at.row + 1}M`)
+      stdin.write(`\x1b[<0;${at.col + 1};${at.row + 1}m`)
+    }
+    check('H2 点击 PR chip 触发超链接打开回调',
+      await settled(() => opened.includes(PR_URL)))
+    if (ink !== undefined) ink.onHyperlinkClick = undefined
+  }
 
   instance.unmount()
   await sleep(100)

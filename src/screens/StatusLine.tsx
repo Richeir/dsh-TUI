@@ -1,5 +1,5 @@
 import React from 'react'
-import { Box, Text, useTerminalSize, useTheme } from '../ui.js'
+import { Box, Link, Text, useTerminalSize, useTheme } from '../ui.js'
 import type { Color } from '../ink/styles.js'
 import { formatTokens } from '../cc/format.js'
 import { t } from '../i18n.js'
@@ -362,13 +362,24 @@ export function StatusLine({
       : []),
     // PR chip trails the branch it belongs to, Claude Code style: `PR #602`,
     // shown whenever the gh probe resolved one for this branch (the probe
-    // itself is gated by the pullRequest switch).
+    // itself is gated by the pullRequest switch). Its own colour (theme
+    // `success` — GitHub's open-PR green) keeps it visually independent from
+    // the blue branch it qualifies, and when the probe also reported a URL
+    // the chip carries it as an OSC 8 hyperlink: a fullscreen click resolves
+    // through Ink's getHyperlinkAt → onHyperlinkClick (wired in Chat) and
+    // opens the PR in the browser.
     ...(statusBar.pullRequest && channel.prNumber !== undefined
       ? [
           {
             key: 'pr',
             id: 'pr' as const,
-            node: <Text color="professionalBlue">{`PR #${channel.prNumber}`}</Text>,
+            node: (
+              <Text color="success">
+                {channel.prUrl === undefined
+                  ? `PR #${channel.prNumber}`
+                  : <Link url={channel.prUrl}>{`PR #${channel.prNumber}`}</Link>}
+              </Text>
+            ),
           },
         ]
       : []),

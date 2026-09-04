@@ -13,6 +13,7 @@ export { default as Box } from './components/design-system/ThemedBox.js'
 export { default as Text } from './components/design-system/ThemedText.js'
 export { default as Spacer } from './ink/components/Spacer.js'
 export { default as Newline, type Props as NewlineProps } from './ink/components/Newline.js'
+export { default as Link } from './ink/components/Link.js'
 export { NoSelect } from './ink/components/NoSelect.js'
 export { AlternateScreen } from './ink/components/AlternateScreen.js'
 export {
