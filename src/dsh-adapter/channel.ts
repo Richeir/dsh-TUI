@@ -1942,6 +1942,31 @@ async function listSessionsSnapshot(ctx: Context): Promise<readonly SessionSumma
 }
 
 /**
+ * Read the output of `gh pr view --json number,url`. Total by construction:
+ * every unrecognizable shape (no PR, a warning banner where JSON should be,
+ * a number that is not a positive integer) means "no breadcrumb" instead of
+ * throwing, because the status bar has to degrade to blank — an exception
+ * inside a `.then` would surface as an unhandled rejection.
+ */
+export function parsePrView(
+  stdout: string,
+): { number: number; url: string | undefined } | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stdout)
+  } catch {
+    return undefined
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+  const { number, url } = parsed as { number?: unknown; url?: unknown }
+  if (typeof number !== 'number' || !Number.isInteger(number) || number <= 0) return undefined
+  return {
+    number,
+    url: typeof url === 'string' && url !== '' ? url : undefined,
+  }
+}
+
+/**
  * Create the live channel state for one agent session: replay the durable
  * transcript, subscribe to the agent's events, and expose every TUI action.
  * @internal
@@ -5592,15 +5617,15 @@ export function createChannel(
       const prGained = next.pullRequest && !state.statusBar.pullRequest
       const prLost = state.statusBar.pullRequest && !next.pullRequest
       state.statusBar = next
-      // Turning the field off hides stale data at once; turning it on mid-
-      // session needs the boot-time probe that the gate had skipped — re-run
+      // Turning the field off hides stale data at once — and invalidates a
+      // reply still crossing the network, which would otherwise repopulate
+      // the breadcrumb right after this emit (the footer gates on the field,
+      // `/status` does not, so the leak used to be visible there). Turning it
+      // on mid-session needs the boot-time probe the gate had skipped — re-run
       // the branch funnel, which chains the PR lookup (branch already known
       // short-circuits the stale-clear; unknown branch means the boot probe
       // is still in flight and will chain on its own).
-      if (prLost) {
-        state.prNumber = undefined
-        state.prUrl = undefined
-      }
+      if (prLost) clearPullRequest()
       state.emit()
       if (prGained && state.gitBranch !== undefined) refreshPullRequest(state.cwd, state.gitBranch)
     },
@@ -8651,11 +8676,25 @@ ${output}
   // resolved through the `gh` CLI. Unlike the branch probe this is a network
   // round-trip, so it only runs while the status-bar field is switched on.
   // Best-effort like the branch probe: no gh / unauthenticated / no PR /
-  // timeout → the field simply stays blank.
-  const refreshPullRequest = (requestedCwd: string, branch: string) => {
+  // timeout → the field simply stays blank (traced on stderr under
+  // DSH_TUI_DEBUG, never as a toast — a missing breadcrumb is not news).
+  // Every probe carries a generation stamp and every clear bumps it. cwd
+  // alone cannot order two probes: /resume can land on the SAME directory
+  // with a different branch, and the reply that then wins the race paints
+  // `PR #602` for a branch it was never about — a number nobody can eyeball
+  // as wrong. So a reply is only trusted while it is still the newest probe,
+  // for the same cwd AND branch, with the field still on and the channel
+  // still alive.
+  let prProbe = 0
+  const clearPullRequest = (): void => {
+    prProbe++
     state.prNumber = undefined
     state.prUrl = undefined
+  }
+  const refreshPullRequest = (requestedCwd: string, branch: string) => {
+    clearPullRequest()
     if (!bash || !state.statusBar.pullRequest || branch === '') return
+    const generation = prProbe
     void bash
       .run(
         bash.resolve({
@@ -8665,28 +8704,46 @@ ${output}
         }),
       )
       .then((result) => {
-        // Same staleness guard as the branch probe (issue #96): a reply from
-        // the previous workspace must never land in the new one's footer.
-        if (state.cwd !== requestedCwd) return
+        // The staleness guard covers the branch probe's case (issue #96: a
+        // reply from the previous workspace) plus the two cwd cannot see:
+        // same-cwd branch changes, and a field switched off mid-flight.
+        if (
+          generation !== prProbe
+          || state.cwd !== requestedCwd
+          || state.gitBranch !== branch
+          || !state.statusBar.pullRequest
+          || state.status === 'disposed'
+        ) {
+          logForDebugging('pr probe: dropped a stale reply', { cwd: requestedCwd, branch })
+          return
+        }
         // gh exits non-zero when the branch has no PR — a blank breadcrumb
         // IS the answer; the extra emit only clears a previously shown one.
         if (result.exitCode !== 0) {
+          logForDebugging('pr probe: gh reported no open PR', {
+            cwd: requestedCwd,
+            branch,
+            exitCode: result.exitCode,
+          })
           state.emit()
           return
         }
-        try {
-          const parsed = JSON.parse(result.stdout.text) as { number?: unknown; url?: unknown }
-          if (typeof parsed.number === 'number' && Number.isFinite(parsed.number)) {
-            state.prNumber = parsed.number
-            state.prUrl = typeof parsed.url === 'string' && parsed.url !== '' ? parsed.url : undefined
-            state.emit()
-          }
-        } catch {
-          // Unparseable gh output: stay blank, same as no PR.
+        const pr = parsePrView(result.stdout.text)
+        if (pr === undefined) {
+          logForDebugging('pr probe: unparseable gh output', { cwd: requestedCwd, branch })
+          return
         }
+        state.prNumber = pr.number
+        state.prUrl = pr.url
+        state.emit()
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         // gh missing, sandbox backend unavailable, or timeout — blank.
+        logForDebugging('pr probe: gh unavailable', {
+          cwd: requestedCwd,
+          branch,
+          error: error instanceof Error ? error.message : String(error),
+        })
       })
   }
   // Statusline breadcrumb: current git branch of the session cwd (best-effort).
@@ -8694,8 +8751,7 @@ ${output}
   // issue #96) so the breadcrumb never shows the previous workspace's branch.
   const refreshGitBranch = () => {
     state.gitBranch = undefined
-    state.prNumber = undefined
-    state.prUrl = undefined
+    clearPullRequest()
     if (!bash) return
     // Capture the requested cwd: a /resume landing while this query is in
     // flight refreshes the branch for the NEW cwd, so a late reply from the

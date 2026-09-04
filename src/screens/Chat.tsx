@@ -1675,6 +1675,11 @@ export function Chat({
           `${t('status-model', { model: channel.model })}${channel.reasoningEffort ? ` · ${capitalize(channel.reasoningEffort)} effort` : ''}`,
           `${t('status-state', { state: channel.working ? t('status-working') : t('status-idle') })}`,
           `${t('status-session', { id: channel.agentId })}`,
+          // `/status` dumps where this session lives, it does not mirror the
+          // footer's switches: the branch shows regardless of gitBranch, and
+          // so does the PR — the probe behind prNumber only ever runs while
+          // statusBar.pullRequest is on, and a reply that lands after the
+          // field went off is dropped, so there is nothing to gate twice.
           `${t('status-dir', { cwd: channel.displayCwd })}${channel.gitBranch ? ` · ${channel.gitBranch}` : ''}${channel.prNumber !== undefined ? ` · PR #${channel.prNumber}` : ''}`,
           `Tokens ${formatTokens(channel.tokens.input)} in → ${formatTokens(channel.tokens.output)} out`,
         ]
