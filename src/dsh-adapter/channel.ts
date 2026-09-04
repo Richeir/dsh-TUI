@@ -1958,6 +1958,13 @@ async function listSessionsSnapshot(ctx: Context): Promise<readonly SessionSumma
   return listSummaries(persistence)
 }
 
+/** Filter predicate for the inherited-prefix skip: events at or above the
+ *  boundary are kept, plus title events unconditionally (a session's
+ *  identification metadata must survive even when its content is deduped). */
+function keepAboveOrTitle(skipBelow: number): (event: SessionEvent) => boolean {
+  return (event) => event.seq >= skipBelow || event.type === 'session/title'
+}
+
 /**
  * Read the output of `gh pr view --json number,url,state`. Total by
  * construction: every unrecognizable shape (no PR, a warning banner where
@@ -4498,7 +4505,7 @@ export function createChannel(
               ? Math.min(liveSeed, parentCovered + 1)
               : 0
           const own = skipBelow > 0
-            ? liveEvents.filter(event => event.seq >= skipBelow || event.type === 'session/title')
+            ? liveEvents.filter(keepAboveOrTitle(skipBelow))
             : liveEvents
           // A live session larger than the remaining budget keeps its TAIL,
           // aligned to whole turns (sessionTree.liveTailWindow): leftover
@@ -4601,6 +4608,11 @@ export function createChannel(
           // through it) stays visible instead of vanishing from the tree.
           truncated = true
           familySessions.push({ ...facts, events: [], live: false, unloaded: true })
+          // When the parent edge is detached (inheritedCut undefined →
+          // parentCovered = -1), this node contributes no coverage; a child
+          // reading coveredThrough.get(id) gets -1, computes skipBelow = 0,
+          // and shows its full log. Correct: the parent shows nothing here
+          // (unloaded), so nothing can be deduped against it.
           coveredThrough.set(id, parentCovered)
           continue
         }
@@ -4682,7 +4694,7 @@ export function createChannel(
             // too, or a long prefix would fill the slice and the branch's OWN
             // events — the only ones nobody else displays — would be cut.
             const all = skipBelow > 0
-              ? inspection.events.filter(event => event.seq >= skipBelow || event.type === 'session/title')
+              ? inspection.events.filter(keepAboveOrTitle(skipBelow))
               : inspection.events
             readFrom = skipBelow
             events = all
@@ -5675,8 +5687,8 @@ export function createChannel(
       // short-circuits the stale-clear; unknown branch means the boot probe
       // is still in flight and will chain on its own).
       if (prLost) clearPullRequest()
-      state.emit()
       if (prGained && state.gitBranch !== undefined) refreshPullRequest(state.cwd, state.gitBranch)
+      state.emit()
     },
     setWhale(visible) {
       if (visible === state.whale) return
@@ -8735,6 +8747,12 @@ ${output}
   // for the same cwd AND branch, with the field still on and the channel
   // still alive.
   let prProbe = 0
+  const prProbeTimeoutMs = (() => {
+    const raw = process.env.DSH_TUI_PR_TIMEOUT_MS
+    if (raw === undefined) return 8000
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 8000
+  })()
   const clearPullRequest = (): void => {
     prProbe++
     state.prNumber = undefined
@@ -8749,10 +8767,10 @@ ${output}
         bash.resolve({
           command: 'gh pr view --json number,url,state',
           workdir: requestedCwd,
-          // 8s ceiling, not configurable: on a slow network a miss is
-          // indistinguishable from "no PR" — both stay blank, the next
-          // branch/cwd/field change probes again.
-          timeoutMs: 8000,
+          // 8s default; override with DSH_TUI_PR_TIMEOUT_MS for slow
+          // networks. A miss is indistinguishable from "no PR" — both stay
+          // blank, the next branch/cwd/field change probes again.
+          timeoutMs: prProbeTimeoutMs,
         }),
       )
       .then((result) => {
