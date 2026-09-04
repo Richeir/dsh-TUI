@@ -8787,6 +8787,22 @@ ${output}
           logForDebugging('pr probe: dropped a stale reply', { cwd: requestedCwd, branch })
           return
         }
+        // A timeout resolves (exitCode null, timedOut true) rather than
+        // rejecting, so it lands here — not in the `.catch` below, which is
+        // only a missing/erroring shell. On-screen it is indistinguishable
+        // from "no PR": the field stays blank. But the reason belongs in the
+        // debug trace, which would otherwise blame gh for a reply it never
+        // got round to returning. Checked before the exit-code branch so a
+        // null exitCode is not misread as "no open PR".
+        if (result.timedOut) {
+          logForDebugging('pr probe: gh timed out', {
+            cwd: requestedCwd,
+            branch,
+            timeoutMs: prProbeTimeoutMs,
+          })
+          state.emit()
+          return
+        }
         // gh exits non-zero when the branch has no PR — a blank breadcrumb
         // IS the answer; the extra emit only clears a previously shown one.
         if (result.exitCode !== 0) {
